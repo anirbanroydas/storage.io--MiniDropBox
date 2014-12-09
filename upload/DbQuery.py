@@ -1,20 +1,23 @@
+import MySQLdb as mdb
+
+
 
 def dbConnect(host,user,passwd,dbname):
 	""" Connect to a Database """
-	db = MySQLdb.connect(host,user,passwd,dbname)
-	cursor = db.cursor()
-	return db,cursor
+	con = mdb.connect(host,user,passwd,dbname)
+	cur = db.cursor()
+	return con,cur
 
 
-def dbClose(db):
+def dbClose(con):
 	""" Close the database connection of database, db """
-	db.close()
+	con.close()
 
 
-def dbQuery(cursor,query):
+def dbQuery(cur,query):
 	""" Execute the database query using the cursor """
 
-	cursor.execute(query)
+	cur.execute(query)
 
 
 
