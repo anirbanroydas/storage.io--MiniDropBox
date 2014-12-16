@@ -32,13 +32,11 @@ def usage():
 class FileSplitter:
     """ File splitter class """
 
-    __fmultiplier = 1048576
-    __commitQlist = []
-    __needblocks = []
-    __blockdict = {}
+    
 
     def __init__(self):
 
+        print "\n initializing FileSplitter object "
         # cache filename
         self.__filename = ''
         # number of equal sized chunks
@@ -53,8 +51,16 @@ class FileSplitter:
         self.__bname = ''
         # Action
         self.__action = 0 # split
+        self.__fmultiplier = 1048576
+        self.__commitQlist = []
+        self.__needblocks = []
+        self.__blockdict = {}
+        print "\n __fmultiplier : ", self.__fmultiplier
+        print "\n __commitQlist : ",self.__commitQlist
+        print "\n __blockdict : ", self.__blockdict
 
     def parseOptions(self, args):
+        """ when used as a script then partse the argv list and set the atrributes"""
 
         import getopt
 
@@ -76,6 +82,14 @@ class FileSplitter:
 
         if not self.__filename:
             sys.exit("Error: filename not given")
+
+
+    def parseValues(self,filename,chunksize,action) :
+        """ when used as a module, then parse the given parameters as arguments and set the atrributes"""
+
+        self.__filename = filename
+        self.__chunksize = int(chunksize)*self.__fmultiplier
+        self.__action = int(action)
         
     def do_work(self):
         if self.__action==0:
@@ -164,6 +178,9 @@ class FileSplitter:
         print 'Splitting file', self.__filename
         print 'Chunk Size', self.__chunksize, '\n'
 
+        chunkdirectory = "/home/cdot/Documents/Storage.0/chunkstore/"
+        print 'chunk file directory path name : ',chunkdirectory,'\n'
+
         for x in range(self.__numchunks):
 
             chunkfilename = bname + '-' + str(x+1) + self.__postfix
@@ -178,7 +195,7 @@ class FileSplitter:
                 print 'Writing file',chunkfilename
                 data = f.read(chunksz)
                 total_bytes += len(data)
-                chunkf = file(chunkfilename, 'wb')
+                chunkf = file(os.path.join(chunkdirectory,chunkfilename), 'wb')
                 chunkf.write(data)
                 chunkf.close()
                 ch = hashlib.sha256()
@@ -223,6 +240,10 @@ class FileSplitter:
             print "\n will Commit the Query .....\n"
             self.commitQuery()
             print "\n commited the Queries \n"
+            print " erasing the query logs and needblocks logs......\n"
+            self.__commitQlist = []
+            self.__needblocks = []
+            self.__blockdict = {}
         else:
             print "\n Error uploading data "
 
@@ -440,6 +461,162 @@ class FileSplitter:
             raise FileSplitterException, str(e)
 
         print 'Wrote file', bname
+
+
+
+
+class FileDelete :
+    """ File Deletion Class"""
+
+    def __init__(self,filename):
+
+        self.__filename = filename
+
+
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+    def getFileInfo(self):
+
+        self.__bname = (os.path.split(self.__filename))[1]
+        bname = self.__bname
+        print '\n bname : ',bname
+        self.__path = (os.path.split(self.__filename))[0]
+        print '\n path : ',self.__path
+
+        return self.__path, self.__bname
+
+
+
+    def del4mFilesystem(self):
+        """ Delete the entry from table Filesystem"""
+
+        print "\n Connecting to Storage0 database .....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "\n connection established \n"
+        cur = con.cursor()
+
+        uId, deviceId = self.getUserInfo()
+        path,filename = self.getFileInfo()
+
+        q = "SELECT filehash from filesystem where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (uId,deviceId,path,filename)
+        cur.execute(q)
+
+        if cur.rowcount>0 :
+            fh = cur.fetchone()[0]
+
+            # Delete entry from filesystem table
+            q = "DELETE from filesystem where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (uId,deviceId,path,filename)
+            cur.execute(q)
+
+            q = "SELECT count from filehashT where filehash = '%s' " % (fh)
+            cur.execute(q)
+
+            # Delete entry from filehashT Table
+            if cur.rowcount>0 :
+                c = cur.fetchone()[0]
+                if c>1:
+                    q = "UPDATE filehashT set count = count - %d where filehash = '%s' " % (1,fh)
+                    cur.execute(q)
+                else :
+                    q = "DELETE from filehashT where filehash = '%s' " % (fh)
+                    cur.execute(q)
+            else:
+                print "\n Unknowing error : since no entry with given filehash present "
+
+
+            #Delete entry from chunkhashT table
+            q = "SELECT * from chunkhashT where filehash = '%s' " % (fh)
+            cur.execute(q)
+
+            rows = cur.fetchall()
+
+            for row in rows:
+                rfh,rch,rc = row[0],row[1],row[2]
+                if rc>1:
+                    q = "UPDATE chunkhashT set count = count - %d where filehash = '%s' and chunkhash = '%s' " % (1,rfh,rch)
+                    cur.execute(q)
+                else :
+                    q = "DELETE from chunkhashT where filehash = '%s' and chunkhash = '%s' " % (rfh,rch)
+                    cur.execute(q)
+
+        else :
+            print "\n Unfortunately no such file in such path exist "
+
+
+        con.commit()
+        cur.close()
+        con.close()
+
+
+class FileMove :
+    """ File move/rename Class """
+
+    def __init__(self,srcfilename,destfilename):
+
+        self.__srcfilename = srcfilename
+        self.__destfilename = destfilename
+
+    
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+    def getFileInfo(self):
+
+        self.__srcbname = (os.path.split(self.__srcfilename))[1]
+        bname = self.__srcbname
+        print '\n srcbname : ',bname
+        self.__srcpath = (os.path.split(self.__srcfilename))[0]
+        print '\n srcpath : ',self.__srcpath
+
+        self.__destbname = (os.path.split(self.__destfilename))[1]
+        bname = self.__destbname
+        print '\n destbname : ',bname
+        self.__destpath = (os.path.split(self.__destfilename))[0]
+        print '\n destpath : ',self.__destpath
+
+
+        return self.__srcpath, self.__srcbname, self.__destpath, self.__destbname
+
+
+    def process(self):
+        """ find out if its a file rename or a file move or move+rename """
+
+        print "\n Connecting to Storage0 database .....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "\n connection established \n"
+        cur = con.cursor()
+
+        uId, deviceId = self.getUserInfo()
+        srcpath,srcfilename, destpath,destfilename = self.getFileInfo()
+
+
+        if srcpath==destpath :
+            print "\n file move type : RENAME "
+            q = "UPDATE filesystem set filename = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (destfilename,uId,deviceId,srcpath,srcfilename)
+            cur.execute(q)
+
+        else :
+            print "\n file move type : MOVE or MOVE+RENAME"
+            q = "UPDATE filesystem set path = '%s' , filename = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (destpath,destfilename, uId,deviceId,srcpath,srcfilename)
+            cur.execute(q)
+
+
+        con.commit()
+        cur.close()
+        con.close()
+
+
+
+
+
+
+
+
 
 def main():
     import sys
