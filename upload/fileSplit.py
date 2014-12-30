@@ -6,6 +6,7 @@ Split a file into multiple small files
 
 import os, sys
 import hashlib
+import string
 import MySQLdb as mdb
 
 
@@ -465,6 +466,161 @@ class FileSplitter:
 
 
 
+class FileModify :
+    """ file modification class """
+
+    def __init__(self,filepath,chunksize):
+
+        self.__filepath = filepath
+        #self.__chunksize = 0
+        self.__fmultiplier = 1048576
+        self.__chunksize = int(chunksize)*self.__fmultiplier
+        #self.__action = 0
+
+
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+    def getFileInfo(self):
+
+        self.__bname = (os.path.split(self.__filepath))[1]
+        bname = self.__bname
+        print '\n bname : ',bname
+        self.__path = (os.path.split(self.__filepath))[0]
+        print '\n path : ',self.__path
+
+        return self.__path, self.__bname
+
+
+
+
+    def calHash(self):
+        """ Calculates the hash of the file"""
+
+
+        try:
+            f = open(self.__filepath, 'rb')
+        except (OSError, IOError), e:
+            raise FileSplitterException, str(e)
+
+
+        fpath,fname = self.getFileInfo()
+
+        # Get the file size
+        fsize = os.path.getsize(self.__filepath)
+        print "\nfile size : ",fsize
+        print
+        # Get no. of chunks
+        if fsize%self.__chunksize==0:
+            self.__numchunks = int(float(fsize)/float(self.__chunksize))
+        else:
+            self.__numchunks = int(float(fsize)/float(self.__chunksize)) + 1
+
+
+        print self.__numchunks
+        chunksz = self.__chunksize
+        total_bytes = 0
+
+        # First find the file hash and send to m-server for availability
+
+        h = hashlib.sha256()
+
+        # For bigger files, thus break the full filehashig procedure into smaller chunks
+
+        for x in range(self.__numchunks):
+
+            # if reading the last section, calculate correct
+            # chunk size.
+
+            if x == self.__numchunks - 1:
+                chunksz = fsize - total_bytes
+
+            data = f.read(chunksz)
+            h.update(data)
+            total_bytes += len(data)
+
+        filehash = h.hexdigest()
+        print
+        print 'filehash : ',filehash
+
+        # Send filehash to m-server
+        print "\nSending filehash to m-server.......\n"
+
+        success = self.send_filehash_mserver(filehash)
+        print ' success :  ',success
+
+        return success
+
+
+
+
+
+    def send_filehash_mserver(self,filehash):
+        """ send the filehash to the meta server for checking availability"""
+        #self.filehash = filehash
+        fh = filehash
+        print 'filehash :  ',fh
+        print "\nconnecting to storage0 database.....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "connection established .... \n"
+        cur = con.cursor()
+        q = "SELECT count from filehashT where filehash= '%s' " % (fh)
+        print "query : ",q,'\n'
+        cur.execute(q)
+
+        #if match found update filehastT's content and chunkhasT's content and add the list to filesystem
+        if cur.rowcount>0 :
+            print " match found \n"
+
+            
+
+            # delete the old filehash or the count of the old filehash from filehashT and counts of old chunkhashes corresponding to given old filehash from chunkhashT
+            fdel = fileSplit.FileDelete(self.__filepath)
+            fdel.del4mFilesystem()
+
+            # add new entry into fileysytem, filehashT, chunkshashT
+
+            commitQ = "UPDATE filehashT set count = count + %d where filehash = '%s' " % (1,fh)
+            #self.commitQlist.append(commitQ)
+            cur.execute(commitQ)
+            commitQ = "UPDATE chunkhashT set count = count + %d where filehash = '%s' " % (1,fh)
+            #self.commitQlist.append(commitQ)
+            cur.execute(commitQ)
+
+            # get user id, device id, path, filename, filehash, version , share id and add that row in filesystem
+
+            uId, deviceId = self.getUserInfo()
+            path,filename = self.getFileInfo()
+
+            commitQ = "INSERT into filesystem (uID,deviceID,path,filename,filehash,version) values (%d,%d,'%s' ,'%s', '%s',1)" % (uId,deviceId,path,filename,fh)
+            cur.execute(commitQ)
+
+            
+
+
+            con.commit()
+            cur.close()
+            con.close()
+
+            return 1
+
+        else:
+            print " new filehash not found \n"
+            cur.close()
+            con.close()
+           
+
+            return 0
+
+
+
+
+
+
+
+
 class FileDelete :
     """ File Deletion Class"""
 
@@ -612,6 +768,204 @@ class FileMove :
 
 
 
+
+class DirCreate:
+    """Directory creation class"""
+
+    def __init__(self,dirpath):
+        self.__dirpath=dirpath
+
+
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+
+    def addDirEntry(self):
+        print "\n Connecting to Storage0 database .....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "\n connection established \n"
+        cur = con.cursor()
+
+        uId,deviceId = self.getUserInfo()
+        dirname = os.path.basename(self.__dirpath)
+        dirpath = os.path.split(self.__dirpath)[0]
+
+        q="INSERT into filesystem (uID,deviceID,path,filename,filetype) values (%d,%d,'%s' ,'%s',%d)" % (uId,deviceId,dirpath,dirname,0)
+        cur.execute(q)
+
+        con.commit()
+        cur.close()
+        con.close()
+
+
+
+class DirMove:
+    """ Directory Movement class"""
+
+    def __init__(self,srcpath,destpath):
+
+        self.__srcpath = srcpath
+        self.__destpath = destpath
+
+    
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+    def getDirInfo(self):
+
+        self.__srcdname = (os.path.split(self.__srcpath))[1]
+        dname = self.__srcdname
+        print '\n srcDname : ',dname
+        self.__srcDpath = (os.path.split(self.__srcpath))[0]
+        print '\n srcDpath : ',self.__srcDpath
+
+        self.__destdname = (os.path.split(self.__destpath))[1]
+        dname = self.__destdname
+        print '\n destDname : ',dname
+        self.__destDpath = (os.path.split(self.__destpath))[0]
+        print '\n destDpath : ',self.__destdpath
+
+
+        return self.__srcDpath, self.__srcdname, self.__destDpath, self.__destdname
+
+
+    def process(self):
+        """ find out if its a Dir rename or a Dir move or move+rename """
+
+        print "\n Connecting to Storage0 database .....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "\n connection established \n"
+        cur = con.cursor()
+
+        uId, deviceId = self.getUserInfo()
+        srcDpath,srcdname, destDpath,destdname = self.getDirInfo()
+
+
+        if srcDpath==destDpath :
+            print "\n Dir move type : RENAME "
+            # update the root level directory rename entry in filesystem table
+            q = "UPDATE filesystem set filename = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (destDpath,destdname,uId,deviceId,srcDpath,srcdname)
+            cur.execute(q)
+            # update the files and subdirectories' path attribute in the filesystem table since the top level parent directory is renamed
+            newpath = self.__srcpath+ '%'
+            q = "SELECT path,filename from filesystem where uID = %d and deviceID = %d and path like '%s' " % (uId,deviceId,newpath)
+            cur.execute(q)
+
+            if cur.rowcount>0:
+                rows = cur.fetchall()
+                for row in rows:
+                    path2,filename2 = row[0] , row [1]
+                    l = len(srcDpath)
+                    
+                    fpath = os.path.join(path2[:l-1],destdname)
+                    print " fpath : ", fpath
+                    l2 = len(destdname)
+                    finalpath = os.path.join(fpath,path2[l+l2:])
+                    print "finalpath : ", finalpath
+                    q = "UPDATE filesystem set path = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (finalpath,uId,deviceId,path2,filename2)
+                    cur.execute(q)
+
+        
+        else :
+            print "\n Dir move type : MOVE or MOVE+RENAME"
+            q = "UPDATE filesystem set path = '%s', filename = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (destdname,uId,deviceId,srcDpath,srcdname)
+            cur.execute(q)
+            # update the files and subdirectories' path attribute in the filesystem table since the top level parent directory is renamed
+            newpath = self.__srcpath+ '%'
+            q = "SELECT path,filename from filesystem where uID = %d and deviceID = %d and path like '%s' " % (uId,deviceId,newpath)
+            cur.execute(q)
+
+            if cur.rowcount>0:
+                rows = cur.fetchall()
+                for row in rows:
+                    path2,filename2 = row[0] , row [1]
+                    l = len(self.__srcpath)
+                    
+                    #fpath = os.path.join(path2[:l-1],destdname)
+                    #print " fpath : ", fpath
+                    #l2 = len(destdname)
+                    finalpath = os.path.join(self.__destpath,path2[l:])
+                    print "finalpath : ", finalpath
+                    q = "UPDATE filesystem set path = '%s' where uID = %d and deviceID = %d and path = '%s' and filename = '%s' " % (finalpath,uId,deviceId,path2,filename2)
+                    cur.execute(q)
+
+        con.commit()
+        cur.close()
+        con.close()
+
+
+
+ class DirDelete:
+    """ Dirctory Deletion Class"""
+
+    def __init__(self,dirpath) :
+
+        self.__dirpath = dirpath
+
+
+    def getUserInfo(self):
+
+        return uID, deviceID
+
+
+    def getDirInfo(self):
+
+        self.__dname = (os.path.split(self.__dirpath))[1]
+        bname = self.__bname
+        print '\n bname : ',bname
+        self.__path = (os.path.split(self.__dirpath))[0]
+        print '\n path : ',self.__path
+
+        return self.__path, self.__dname
+
+
+
+    def del4mFilesystem(self):
+        """ Delete the entry from table Filesystem"""
+
+        print "\n Connecting to Storage0 database .....\n"
+        con = mdb.connect('localhost','storage0user','storage0roy','storage0')
+        print "\n connection established \n"
+        cur = con.cursor()
+
+        uId, deviceId = self.getUserInfo()
+        path,dname = self.getFileInfo()
+
+        # Delete the root level directory
+        q= "DELETE from filesystem where uID = %d and deviceID = %d and path = '%s' and filename = '%s' and filetype = %d " % (uId,deviceId,path,dname,0)
+        cur.execute(q)
+
+        # Delete all files and sub directories' entries
+        newpath=self.__dirpath+'%'
+
+        q = "SELECT path,filename,filetype from filesystem where uID = %d and deviceID = %d and path like '%s' " % (uId,deviceId,newpath)
+        cur.execute(q)
+
+        if cur.rowcount>0 :
+            rows = cur.fetchall()
+
+            for row in rows:
+
+                path2,filename2,filetype2 = row[0],row[1],row[2]
+                # check if its a dirctory or a file and '0' means directory
+                if filetype2==0:
+                    q= "DELETE from filesystem where uID = %d and deviceID = %d and path = '%s' and filename = '%s' and filetype = '%s' " % (uId,deviceId,path2,filename2,filetype2)
+                    cur.execute(q)
+                else :
+                    filepath= os.path.join(path,filename)
+                    # Delete entry from filesystem table
+                    fdel = fileSplit.FileDelete(filepath)
+                    fdel.del4mFilesystem()
+
+
+
+        con.commit()
+        cur.close()
+        con.close() 
 
 
 
